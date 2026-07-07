@@ -1,0 +1,43 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.venv/
+env/
+.mypy_cache/
+.pytest_cache/
+
+# ---- Secrets / env ----
+.env
+**/.env
+*.key
+*.pem
+secrets/
+
+# ---- Databases ----
+*.db
+*.sqlite
+*.sqlite3
+
+# ---- Node / frontend ----
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+
+# ---- User uploads (generated at runtime) ----
+backend/app/static/uploads/
+
+# ---- OS / editors ----
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# ---- Logs ----
+*.log
+logs/
