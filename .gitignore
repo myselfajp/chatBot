@@ -30,6 +30,9 @@ dist-ssr/
 # ---- User uploads (generated at runtime) ----
 backend/app/static/uploads/
 
+# ---- Built panel (produced during deploy) ----
+backend/app/static/panel/
+
 # ---- OS / editors ----
 .DS_Store
 Thumbs.db

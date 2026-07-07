@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Deploy the ChatBot Platform on a single public port.
+# Builds the React panel into the backend's static tree (so the backend serves
+# panel + API + widget on one port), then brings up Postgres + the app via
+# docker compose (production).
+#
+# Requires: node/npm, docker + compose, and backend/.env (with BASE_URL + APP_PORT).
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+
+if [ ! -f "$ROOT/backend/.env" ]; then
+  echo "ERROR: backend/.env is missing. Create it first (see backend/.env.example)."
+  exit 1
+fi
+
+# Public URL the panel/widget/API share (same origin).
+PUBLIC_URL="$(grep -E '^BASE_URL=' "$ROOT/backend/.env" | cut -d= -f2- | tr -d '[:space:]')"
+PUBLIC_URL="${PUBLIC_URL:-http://localhost:8000}"
+
+echo "==> Building panel (VITE_API_BASE=$PUBLIC_URL) ..."
+cd "$ROOT/panel"
+npm install --no-audit --no-fund
+VITE_API_BASE="$PUBLIC_URL" npm run build -- \
+  --outDir "$ROOT/backend/app/static/panel" --emptyOutDir
+
+echo "==> Building & starting containers ..."
+cd "$ROOT/backend"
+docker compose -f docker-compose.prod.yml up --build -d
+
+echo "==> Waiting for health ..."
+APP_PORT="$(grep -E '^APP_PORT=' .env | cut -d= -f2- | tr -d '[:space:]' || true)"
+APP_PORT="${APP_PORT:-8000}"
+for i in $(seq 1 40); do
+  if curl -sf "http://127.0.0.1:${APP_PORT}/v1/health" >/dev/null 2>&1; then
+    echo "==> Healthy. App is live on port ${APP_PORT}."
+    exit 0
+  fi
+  sleep 2
+done
+echo "WARN: health check did not pass yet; check: docker compose -f docker-compose.prod.yml logs -f app"
