@@ -1,0 +1,15 @@
+# Keep secrets & local cruft out of the image (env is injected at runtime via compose env_file)
+.env
+.env.*
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.mypy_cache/
+.pytest_cache/
+*.db
+*.sqlite
+smoke_test.py
+app/static/uploads/
