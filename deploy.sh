@@ -14,14 +14,12 @@ if [ ! -f "$ROOT/backend/.env" ]; then
   exit 1
 fi
 
-# Public URL the panel/widget/API share (same origin).
-PUBLIC_URL="$(grep -E '^BASE_URL=' "$ROOT/backend/.env" | cut -d= -f2- | tr -d '[:space:]')"
-PUBLIC_URL="${PUBLIC_URL:-http://localhost:8000}"
-
-echo "==> Building panel (VITE_API_BASE=$PUBLIC_URL) ..."
+# The panel is served by the backend, so it uses same-origin API calls
+# (VITE_API_BASE=""). This makes the build portable across host/port/proxy.
+echo "==> Building panel (same-origin) ..."
 cd "$ROOT/panel"
 npm install --no-audit --no-fund
-VITE_API_BASE="$PUBLIC_URL" npm run build -- \
+VITE_API_BASE="" npm run build -- \
   --outDir "$ROOT/backend/app/static/panel" --emptyOutDir
 
 echo "==> Building & starting containers ..."

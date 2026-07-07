@@ -1,8 +1,11 @@
 import axios from "axios";
 
-// Backend base URL. Override with VITE_API_BASE in panel/.env
+// Backend base URL. Override with VITE_API_BASE in panel/.env.
+// If VITE_API_BASE is defined (even ""), use it as-is — "" means same-origin
+// (the panel is served by the backend). Otherwise default to localhost for dev.
+const _RAW_API_BASE = import.meta.env.VITE_API_BASE;
 export const API_BASE =
-  import.meta.env.VITE_API_BASE || "http://localhost:8000";
+  _RAW_API_BASE !== undefined ? _RAW_API_BASE : "http://localhost:8000";
 
 export const TOKEN_KEY = "chatbot_panel_token";
 
