@@ -8,24 +8,35 @@
       body { font-family: system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 20px; color: #1f2937; line-height: 1.6; }
       code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; }
       .note { background: #eef2ff; border: 1px solid #c7d2fe; padding: 12px 16px; border-radius: 8px; }
+      #status { color: #6b7280; font-size: 14px; }
     </style>
   </head>
   <body>
     <h1>Widget demo page</h1>
-    <p>This page loads the embeddable widget for a real bot. Open it at
-      <code>http://localhost:8008/widget/demo.html</code> — the chat bubble
-      appears in the bottom-right corner.</p>
-    <p class="note">The bubble shows because this bot's <strong>Website URL</strong>
-      is blank (no domain lock) and its display rule is “all pages”. To actually
-      get replies, enable a provider with a valid model + API key for this bot in
-      the panel (Providers tab); otherwise sending a message returns a
-      “not configured yet” notice.</p>
+    <p>Preview any bot by adding its public key to the URL:
+      <code>?key=YOUR_PUBLIC_KEY</code></p>
+    <p class="note">The chat bubble/box appears in the bottom-right if the bot's
+      <strong>Website URL</strong> is blank (or matches this page's domain) and its
+      display rules allow it here. To get real replies, enable a provider with a
+      valid model + API key for the bot in the panel.</p>
+    <p id="status"></p>
 
-    <!-- Embed snippet (this is exactly what a customer pastes on their site): -->
-    <script
-      src="http://localhost:8008/widget/chatbot-widget.js?v=4"
-      data-bot-key="15e8fc4a913a4f1c880db849d80c3fd6"
-      defer
-    ></script>
+    <script>
+      (function () {
+        var key = new URLSearchParams(location.search).get("key");
+        var st = document.getElementById("status");
+        if (!key) {
+          st.textContent =
+            "No ?key= provided — append a bot public key to the URL to load the widget.";
+          return;
+        }
+        var s = document.createElement("script");
+        s.src = location.origin + "/widget/chatbot-widget.js?v=5";
+        s.setAttribute("data-bot-key", key);
+        s.defer = true;
+        document.body.appendChild(s);
+        st.textContent = "Loading widget for key " + key + " …";
+      })();
+    </script>
   </body>
 </html>
