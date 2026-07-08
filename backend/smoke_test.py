@@ -172,7 +172,7 @@ with TestClient(main.app) as client:
     print("== sitemap -> feed job ==")
     r = client.post(
         f"/v1/bots/{bot_id}/feed/sitemap",
-        json={"sitemap_url": "https://ex.com/sitemap.xml", "max_pages": 5},
+        json={"sitemap_url": "https://ex.com/sitemap.xml", "max_pages": 5, "exclude": ["/a"]},
         headers=H,
     )
     check("sitemap job accepted (202)", r.status_code == 202, r.text)
@@ -182,6 +182,8 @@ with TestClient(main.app) as client:
     job = r.json()
     check("job status done", job.get("status") == "done", r.text)
     check("job added items", job.get("items_added", 0) > 0, r.text)
+    # sitemap has /a and /b; excluding /a leaves 1 page
+    check("exclude skipped a page (1 total)", job.get("pages_total") == 1, r.text)
     r = client.get(f"/v1/bots/{bot_id}", headers=H)
     check("feed has (Source: ...) attribution", "(Source:" in r.json().get("feed_data", ""), r.json().get("feed_data", "")[:120])
 

@@ -113,7 +113,9 @@ def start_sitemap_feed(
     db.commit()
     db.refresh(job)
 
-    background_tasks.add_task(process_feed_job, job.id, payload.max_pages)
+    background_tasks.add_task(
+        process_feed_job, job.id, payload.max_pages, payload.exclude
+    )
     return FeedJobStatus(
         id=job.id,
         status=job.status,

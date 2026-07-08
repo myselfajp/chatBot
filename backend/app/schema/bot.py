@@ -194,6 +194,8 @@ class PublicBotConfig(BaseModel):
 class SitemapFeedInput(BaseModel):
     sitemap_url: str = Field(..., max_length=1000)
     max_pages: int = Field(default=15, ge=1, le=200)
+    # URL patterns to skip, e.g. "/blog/*" or "https://example.com/blog/*".
+    exclude: List[str] = Field(default_factory=list)
 
 
 class FeedJobStatus(BaseModel):

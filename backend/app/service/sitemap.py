@@ -11,6 +11,7 @@ import html as html_lib
 import json
 import re
 from typing import List, Tuple
+from urllib.parse import urlparse
 
 import httpx
 
@@ -34,8 +35,45 @@ def _fetch(url: str) -> str:
         return r.text
 
 
-def parse_sitemap(url: str, max_pages: int) -> List[str]:
-    """Return up to max_pages page URLs from a sitemap or sitemap index."""
+def _strip_scheme(u: str) -> str:
+    return re.sub(r"(?i)^https?://", "", u.strip()).rstrip("/")
+
+
+def compile_excludes(patterns) -> list:
+    """Compile exclude patterns (paths like /blog/* or full URLs, '*' = wildcard)."""
+    compiled = []
+    for p in patterns or []:
+        p = (p or "").strip()
+        if not p:
+            continue
+        is_path = p.startswith("/")
+        norm = p.rstrip("/") if is_path else _strip_scheme(p)
+        norm = norm or p
+        rx = re.compile(
+            "^" + ".*".join(re.escape(s) for s in norm.split("*")) + "$", re.IGNORECASE
+        )
+        compiled.append((rx, is_path))
+    return compiled
+
+
+def is_excluded(url: str, compiled: list) -> bool:
+    if not compiled:
+        return False
+    host_path = _strip_scheme(url)
+    try:
+        path = (urlparse(url).path or "/").rstrip("/") or "/"
+    except ValueError:
+        path = "/"
+    for rx, is_path in compiled:
+        if rx.match(path if is_path else host_path):
+            return True
+    return False
+
+
+def parse_sitemap(url: str, max_pages: int, excludes=None) -> List[str]:
+    """Return up to max_pages page URLs from a sitemap or sitemap index,
+    skipping any URL matching the exclude patterns."""
+    compiled = compile_excludes(excludes)
     xml = _fetch(url)
     locs = [html_lib.unescape(m).strip() for m in _LOC_RE.findall(xml)]
     locs = [l for l in locs if l]
@@ -48,12 +86,15 @@ def parse_sitemap(url: str, max_pages: int) -> List[str]:
                 continue
             for m in _LOC_RE.findall(sub_xml):
                 u = html_lib.unescape(m).strip()
-                if u:
+                if u and not is_excluded(u, compiled):
                     pages.append(u)
+                    if len(pages) >= max_pages:
+                        break
             if len(pages) >= max_pages:
                 break
         return pages[:max_pages]
-    return locs[:max_pages]
+    pages = [l for l in locs if not is_excluded(l, compiled)]
+    return pages[:max_pages]
 
 
 def fetch_page_text(url: str) -> str:
@@ -121,7 +162,7 @@ def _generate_qa(provider, model, api_key, url, content) -> List[dict]:
     return _parse_qa(reply)
 
 
-def process_feed_job(job_id: str, max_pages: int) -> None:
+def process_feed_job(job_id: str, max_pages: int, excludes=None) -> None:
     """Background worker: crawl the sitemap and append generated feed items."""
     db = SessionLocal()
     bot_repo = BotRepository()
@@ -149,7 +190,7 @@ def process_feed_job(job_id: str, max_pages: int) -> None:
             return
 
         try:
-            urls = parse_sitemap(job.sitemap_url, max_pages)
+            urls = parse_sitemap(job.sitemap_url, max_pages, excludes)
         except Exception as exc:
             job.status = "error"
             job.message = f"Could not read sitemap: {exc}"

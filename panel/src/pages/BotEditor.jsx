@@ -102,6 +102,7 @@ export default function BotEditor() {
   const [showSitemap, setShowSitemap] = useState(false);
   const [sitemapUrl, setSitemapUrl] = useState("");
   const [sitemapMax, setSitemapMax] = useState(15);
+  const [sitemapExclude, setSitemapExclude] = useState("");
   const [sitemapJob, setSitemapJob] = useState(null);
   const [sitemapBusy, setSitemapBusy] = useState(false);
 
@@ -273,9 +274,14 @@ export default function BotEditor() {
     setSitemapJob({ status: "queued", pages_done: 0, pages_total: 0, items_added: 0 });
     try {
       const maxPages = Math.max(1, Math.min(200, Number(sitemapMax) || 15));
+      const exclude = sitemapExclude
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean);
       const { data } = await api.post(`/v1/bots/${id}/feed/sitemap`, {
         sitemap_url: url,
         max_pages: maxPages,
+        exclude,
       });
       let job = data;
       for (let i = 0; i < 800 && job.status !== "done" && job.status !== "error"; i++) {
@@ -487,6 +493,20 @@ export default function BotEditor() {
               <div className="hint" style={{ marginTop: -8 }}>
                 Max pages (1–200). Default 15.
               </div>
+
+              <Field
+                label="Exclude URLs (optional)"
+                hint="One pattern per line. Use * as a wildcard. Matching pages are skipped, e.g. /blog/* or https://example.com/blog/*"
+              >
+                <textarea
+                  className="textarea mono"
+                  rows={3}
+                  value={sitemapExclude}
+                  onChange={(e) => setSitemapExclude(e.target.value)}
+                  placeholder={"/blog/*\n/tag/*\nhttps://example.com/private/*"}
+                />
+              </Field>
+
               {sitemapJob && (
                 <div className="hint" style={{ marginTop: 4 }}>
                   Status: <strong>{sitemapJob.status}</strong>
