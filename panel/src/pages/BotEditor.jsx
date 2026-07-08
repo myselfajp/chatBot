@@ -101,6 +101,7 @@ export default function BotEditor() {
   // Sitemap -> feed
   const [showSitemap, setShowSitemap] = useState(false);
   const [sitemapUrl, setSitemapUrl] = useState("");
+  const [sitemapMax, setSitemapMax] = useState(15);
   const [sitemapJob, setSitemapJob] = useState(null);
   const [sitemapBusy, setSitemapBusy] = useState(false);
 
@@ -271,12 +272,13 @@ export default function BotEditor() {
     setSuccess("");
     setSitemapJob({ status: "queued", pages_done: 0, pages_total: 0, items_added: 0 });
     try {
+      const maxPages = Math.max(1, Math.min(200, Number(sitemapMax) || 15));
       const { data } = await api.post(`/v1/bots/${id}/feed/sitemap`, {
         sitemap_url: url,
-        max_pages: 15,
+        max_pages: maxPages,
       });
       let job = data;
-      for (let i = 0; i < 150 && job.status !== "done" && job.status !== "error"; i++) {
+      for (let i = 0; i < 800 && job.status !== "done" && job.status !== "error"; i++) {
         await new Promise((r) => setTimeout(r, 2500));
         const res = await api.get(`/v1/bots/${id}/feed/jobs/${data.id}`);
         job = res.data;
@@ -453,7 +455,7 @@ export default function BotEditor() {
             >
               <Field
                 label="Sitemap URL"
-                hint="We read each page listed in the sitemap and use your active provider to auto-generate FAQ items — each tagged with its source page. Up to 15 pages per run."
+                hint="We read each page listed in the sitemap and use your active provider to auto-generate FAQ items — each tagged with its source page. More pages = more time and provider cost."
               >
                 <div className="row">
                   <input
@@ -462,6 +464,16 @@ export default function BotEditor() {
                     value={sitemapUrl}
                     onChange={(e) => setSitemapUrl(e.target.value)}
                     placeholder="https://example.com/sitemap.xml"
+                  />
+                  <input
+                    className="input"
+                    type="number"
+                    min={1}
+                    max={200}
+                    style={{ width: 96 }}
+                    value={sitemapMax}
+                    onChange={(e) => setSitemapMax(e.target.value)}
+                    title="Max pages to read (1–200)"
                   />
                   <button
                     className="btn btn-primary"
@@ -472,6 +484,9 @@ export default function BotEditor() {
                   </button>
                 </div>
               </Field>
+              <div className="hint" style={{ marginTop: -8 }}>
+                Max pages (1–200). Default 15.
+              </div>
               {sitemapJob && (
                 <div className="hint" style={{ marginTop: 4 }}>
                   Status: <strong>{sitemapJob.status}</strong>

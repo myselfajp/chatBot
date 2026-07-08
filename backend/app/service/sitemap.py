@@ -41,7 +41,7 @@ def parse_sitemap(url: str, max_pages: int) -> List[str]:
     locs = [l for l in locs if l]
     if "<sitemapindex" in xml.lower():
         pages: List[str] = []
-        for sub in locs[:10]:
+        for sub in locs[:50]:
             try:
                 sub_xml = _fetch(sub)
             except Exception:
