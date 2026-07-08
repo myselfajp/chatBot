@@ -82,6 +82,9 @@ class Bot(Base):
     launcher_icon_url: Mapped[str] = mapped_column(
         String(500), nullable=False, default=""
     )
+    # Admin-authored custom CSS / JS applied to the widget (override our styles).
+    custom_css: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    custom_js: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 

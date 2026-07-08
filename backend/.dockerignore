@@ -13,3 +13,6 @@ __pycache__/
 *.sqlite
 smoke_test.py
 app/static/uploads/
+tests/
+test_pytest.db
+requirements-dev.txt

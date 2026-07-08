@@ -89,6 +89,42 @@ class ConversationRepository(BaseRepository[Conversation]):
             db.refresh(convo)
         return convo
 
+    def find_by_session(
+        self, db: Session, bot_id: int, session_id: str
+    ) -> Optional[Conversation]:
+        stmt = (
+            select(Conversation)
+            .where(Conversation.bot_id == bot_id, Conversation.session_id == session_id)
+            .options(selectinload(Conversation.messages))
+        )
+        return db.execute(stmt).scalar_one_or_none()
+
+    def get_detail(self, db: Session, conversation_id: str) -> Optional[Conversation]:
+        stmt = (
+            select(Conversation)
+            .where(Conversation.id == conversation_id)
+            .options(selectinload(Conversation.messages))
+        )
+        return db.execute(stmt).scalar_one_or_none()
+
+    def list_for_bot(
+        self, db: Session, bot_id: int, page: int = 1, limit: int = 30
+    ) -> Tuple[List[Conversation], int]:
+        total = db.execute(
+            select(func.count()).select_from(Conversation).where(Conversation.bot_id == bot_id)
+        ).scalar_one()
+        offset = (page - 1) * limit
+        stmt = (
+            select(Conversation)
+            .where(Conversation.bot_id == bot_id)
+            .options(selectinload(Conversation.messages))
+            .order_by(desc(Conversation.created_at))
+            .limit(limit)
+            .offset(offset)
+        )
+        convos = list(db.execute(stmt).scalars().all())
+        return convos, total
+
     def recent_messages(
         self, db: Session, conversation_id: str, limit: int
     ) -> List[Message]:

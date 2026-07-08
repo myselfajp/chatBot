@@ -76,6 +76,8 @@ class BotUpdate(BaseModel):
     accent_color: Optional[str] = Field(default=None, max_length=20)
     launcher_style: Optional[str] = None
     launcher_icon_url: Optional[str] = Field(default=None, max_length=500)
+    custom_css: Optional[str] = None
+    custom_js: Optional[str] = None
     is_active: Optional[bool] = None
     providers: Optional[List[ProviderConfigInput]] = None
 
@@ -128,6 +130,8 @@ class BotOut(BaseModel):
     accent_color: str
     launcher_style: str
     launcher_icon_url: str
+    custom_css: str
+    custom_js: str
     is_active: bool
     providers: List[ProviderConfigOut]
     embed_snippet: str
@@ -185,7 +189,61 @@ class PublicBotConfig(BaseModel):
     accent_color: str
     launcher_style: str
     launcher_icon_url: str
+    custom_css: str
+    custom_js: str
     is_active: bool
+
+
+# --------------------------------------------------------------------------- #
+# Chat history / conversations
+# --------------------------------------------------------------------------- #
+class MessageOut(BaseModel):
+    role: str
+    content: str
+    created_at: datetime
+
+
+class PublicHistory(BaseModel):
+    session_id: str
+    messages: List[MessageOut]
+
+
+class ConversationSummary(BaseModel):
+    id: str
+    session_id: str
+    message_count: int
+    preview: str
+    created_at: datetime
+    last_message_at: Optional[datetime] = None
+
+
+class ConversationListResponse(BaseModel):
+    status: str = "success"
+    data: List[ConversationSummary]
+    total: int
+
+
+class ConversationDetail(BaseModel):
+    id: str
+    session_id: str
+    created_at: datetime
+    messages: List[MessageOut]
+
+
+# --------------------------------------------------------------------------- #
+# Style assistant (helper that only writes widget CSS/JS)
+# --------------------------------------------------------------------------- #
+class StyleChatMessage(BaseModel):
+    role: str  # user | assistant
+    content: str
+
+
+class StyleAssistantInput(BaseModel):
+    messages: List[StyleChatMessage]
+
+
+class StyleAssistantOutput(BaseModel):
+    reply: str
 
 
 # --------------------------------------------------------------------------- #
@@ -200,7 +258,8 @@ class SitemapFeedInput(BaseModel):
 
 class FeedJobStatus(BaseModel):
     id: str
-    status: str  # queued | running | done | error
+    status: str  # queued | running | done | error | stopped | cancelled
+    control: str = ""
     sitemap_url: str
     message: str
     pages_total: int

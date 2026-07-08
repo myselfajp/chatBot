@@ -3,6 +3,8 @@ import { useNavigate, useParams } from "react-router-dom";
 import api, { API_BASE, errMsg } from "../api/client";
 import Layout from "../components/Layout";
 import { Badge, Field, FullPageSpinner, Notice, Spinner, Switch } from "../components/ui";
+import StyleTab from "./bot/StyleTab";
+import ConversationsTab from "./bot/ConversationsTab";
 
 const PROVIDERS = [
   {
@@ -28,7 +30,15 @@ const PROVIDERS = [
   },
 ];
 
-const TABS = ["General", "Prompt", "Feed Data", "Providers", "Embed & Test"];
+const TABS = [
+  "General",
+  "Prompt",
+  "Feed Data",
+  "Providers",
+  "Embed & Test",
+  "Style",
+  "Conversations",
+];
 
 const DISPLAY_MODES = [
   {
@@ -66,6 +76,8 @@ const emptyForm = {
   accent_color: "#4f46e5",
   launcher_style: "circle",
   launcher_icon_url: "",
+  custom_css: "",
+  custom_js: "",
   is_active: true,
 };
 
@@ -104,6 +116,7 @@ export default function BotEditor() {
   const [sitemapMax, setSitemapMax] = useState(15);
   const [sitemapExclude, setSitemapExclude] = useState("");
   const [sitemapJob, setSitemapJob] = useState(null);
+  const [sitemapJobId, setSitemapJobId] = useState("");
   const [sitemapBusy, setSitemapBusy] = useState(false);
 
   const [publicKey, setPublicKey] = useState("");
@@ -137,6 +150,8 @@ export default function BotEditor() {
       accent_color: bot.accent_color || "#4f46e5",
       launcher_style: bot.launcher_style || "circle",
       launcher_icon_url: bot.launcher_icon_url || "",
+      custom_css: bot.custom_css || "",
+      custom_js: bot.custom_js || "",
       is_active: bot.is_active !== false,
     });
     setProviders(bot.providers || []);
@@ -237,6 +252,8 @@ export default function BotEditor() {
         accent_color: form.accent_color,
         launcher_style: form.launcher_style,
         launcher_icon_url: form.launcher_icon_url,
+        custom_css: form.custom_css,
+        custom_js: form.custom_js,
         is_active: form.is_active,
         providers: PROVIDERS.map((p) => {
           const row = providerByKey[p.key] || {};
@@ -283,6 +300,7 @@ export default function BotEditor() {
         max_pages: maxPages,
         exclude,
       });
+      setSitemapJobId(data.id);
       let job = data;
       for (let i = 0; i < 800 && job.status !== "done" && job.status !== "error"; i++) {
         await new Promise((r) => setTimeout(r, 2500));
@@ -302,6 +320,15 @@ export default function BotEditor() {
       setError(errMsg(err));
     } finally {
       setSitemapBusy(false);
+    }
+  };
+
+  const controlSitemap = async (action) => {
+    if (!sitemapJobId) return;
+    try {
+      await api.post(`/v1/bots/${id}/feed/jobs/${sitemapJobId}/${action}`);
+    } catch (err) {
+      setError(errMsg(err));
     }
   };
 
@@ -515,6 +542,24 @@ export default function BotEditor() {
                   {sitemapJob.items_added > 0 &&
                     `, ${sitemapJob.items_added} items added`}
                   {sitemapJob.message ? ` — ${sitemapJob.message}` : ""}
+                </div>
+              )}
+              {sitemapBusy && (
+                <div className="row mt-1">
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => controlSitemap("stop")}
+                    title="Stop scanning but keep what was gathered"
+                  >
+                    Stop &amp; keep
+                  </button>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => controlSitemap("cancel")}
+                    title="Cancel and discard"
+                  >
+                    Cancel
+                  </button>
                 </div>
               )}
               <p className="hint" style={{ marginBottom: 0 }}>
@@ -907,6 +952,12 @@ export default function BotEditor() {
           <BotTester publicKey={publicKey} />
         </div>
       )}
+
+      {tab === "Style" && (
+        <StyleTab botId={id} form={form} setField={setField} />
+      )}
+
+      {tab === "Conversations" && <ConversationsTab botId={id} />}
     </Layout>
   );
 }

@@ -29,6 +29,21 @@ from app.service import llm
 
 CANONICAL_PROVIDERS = ("openai", "anthropic", "deepseek")
 
+STYLE_ASSISTANT_SYSTEM = (
+    "You are a focused assistant that ONLY helps style an embeddable chat widget by "
+    "writing CSS and/or JavaScript. Refuse anything unrelated to styling this widget.\n\n"
+    "The widget lives inside a Shadow DOM. Custom CSS is appended AFTER the base styles "
+    "(so your rules win), and custom JS runs with the shadow root passed in as `root` "
+    "(use root.querySelector(...)). Available selectors/classes:\n"
+    "- .cbw-launcher (floating button), .cbw-panel (chat window)\n"
+    "- .cbw-header, .cbw-avatar, .cbw-name, .cbw-sub, .cbw-close, .cbw-expand\n"
+    "- .cbw-body (messages area), .cbw-msg, .cbw-msg.bot, .cbw-msg.user, .cbw-msg.err\n"
+    "- .cbw-quick button (quick replies), .cbw-links button (link buttons)\n"
+    "- .cbw-inwrap, .cbw-inbox, .cbw-input (textarea), .cbw-send (send button), .cbw-foot (footer)\n\n"
+    "Guidelines: keep answers short. When giving code, put CSS in a ```css block and JS in a "
+    "```js block. Prefer CSS. Do not use @import or external URLs. Explain briefly in one or two lines."
+)
+
 
 def paths_to_text(paths: Optional[List[str]]) -> str:
     if not paths:
@@ -153,6 +168,11 @@ class BotService:
             bot.quick_replies = paths_to_text(payload.quick_replies)
         if "link_buttons" in provided:
             bot.link_buttons = link_buttons_to_text(payload.link_buttons)
+        # Custom widget CSS/JS (length-capped).
+        if "custom_css" in provided and payload.custom_css is not None:
+            bot.custom_css = payload.custom_css[: settings.CUSTOM_CSS_MAX_CHARS]
+        if "custom_js" in provided and payload.custom_js is not None:
+            bot.custom_js = payload.custom_js[: settings.CUSTOM_JS_MAX_CHARS]
 
         simple_fields = {
             "name",
@@ -261,6 +281,8 @@ class BotService:
             accent_color=bot.accent_color,
             launcher_style=bot.launcher_style,
             launcher_icon_url=bot.launcher_icon_url,
+            custom_css=bot.custom_css,
+            custom_js=bot.custom_js,
             is_active=bot.is_active,
             providers=providers_out,
             embed_snippet=self.embed_snippet(bot.public_key),
@@ -285,6 +307,8 @@ class BotService:
             accent_color=bot.accent_color,
             launcher_style=bot.launcher_style,
             launcher_icon_url=bot.launcher_icon_url,
+            custom_css=bot.custom_css,
+            custom_js=bot.custom_js,
             is_active=bot.is_active,
         )
 
@@ -335,6 +359,60 @@ class BotService:
             return True
         return False
 
+    def prepare_chat(
+        self,
+        db: Session,
+        public_key: str,
+        session_id: str,
+        message: str,
+        origin: Optional[str] = None,
+    ) -> dict:
+        """Validate + assemble everything needed to answer a chat message.
+
+        Shared by the streaming and non-streaming endpoints. Raises HTTPException
+        on any problem.
+        """
+        bot = self.bot_repo.get_by_public_key(db, public_key)
+        if not bot:
+            raise HTTPException(status_code=404, detail="Bot not found")
+        if not bot.is_active:
+            raise HTTPException(status_code=403, detail="This chatbot is currently disabled.")
+        if not self._origin_allowed(bot, origin):
+            raise HTTPException(
+                status_code=403,
+                detail="This chatbot is not authorized to run on this domain.",
+            )
+        provider = bot.active_provider
+        pconf = next((p for p in bot.providers if p.provider == provider), None)
+        if pconf is None or not pconf.enabled:
+            raise HTTPException(status_code=400, detail="This chatbot is not fully configured yet.")
+        api_key = decrypt(pconf.api_key_encrypted)
+        if not api_key:
+            raise HTTPException(status_code=400, detail="This chatbot is not fully configured yet.")
+
+        convo = self.conversation_repo.get_or_create(db, bot.id, session_id)
+        history = self.conversation_repo.recent_messages(
+            db, convo.id, settings.CHAT_HISTORY_LIMIT
+        )
+        messages = [{"role": m.role, "content": m.content} for m in history]
+        if messages and messages[-1]["role"] == "user":
+            messages.pop()
+        messages.append({"role": "user", "content": message})
+
+        system_prompt = self._build_system_prompt(bot)
+        conversation_id = convo.id
+        # Close the read transaction now so it doesn't hold a lock while a
+        # separate session persists the reply after streaming.
+        db.commit()
+        return {
+            "provider": provider,
+            "model": pconf.model,
+            "api_key": api_key,
+            "system_prompt": system_prompt,
+            "messages": messages,
+            "conversation_id": conversation_id,
+        }
+
     def handle_chat(
         self,
         db: Session,
@@ -343,53 +421,39 @@ class BotService:
         message: str,
         origin: Optional[str] = None,
     ) -> ChatOutput:
-        bot = self.bot_repo.get_by_public_key(db, public_key)
-        if not bot:
-            raise HTTPException(status_code=404, detail="Bot not found")
-        if not bot.is_active:
-            raise HTTPException(status_code=403, detail="This chatbot is currently disabled.")
-
-        if not self._origin_allowed(bot, origin):
-            raise HTTPException(
-                status_code=403,
-                detail="This chatbot is not authorized to run on this domain.",
-            )
-
-        provider = bot.active_provider
-        pconf = next((p for p in bot.providers if p.provider == provider), None)
-        if pconf is None or not pconf.enabled:
-            raise HTTPException(
-                status_code=400,
-                detail="This chatbot is not fully configured yet.",
-            )
-        api_key = decrypt(pconf.api_key_encrypted)
-        if not api_key:
-            raise HTTPException(
-                status_code=400,
-                detail="This chatbot is not fully configured yet.",
-            )
-
-        convo = self.conversation_repo.get_or_create(db, bot.id, session_id)
-        history = self.conversation_repo.recent_messages(
-            db, convo.id, settings.CHAT_HISTORY_LIMIT
-        )
-        messages = [{"role": m.role, "content": m.content} for m in history]
-        # Drop a trailing orphaned user message so roles alternate cleanly
-        # (required by providers like Anthropic).
-        if messages and messages[-1]["role"] == "user":
-            messages.pop()
-        messages.append({"role": "user", "content": message})
-
-        system_prompt = self._build_system_prompt(bot)
+        ctx = self.prepare_chat(db, public_key, session_id, message, origin)
         reply = llm.generate_reply(
-            provider=provider,
+            provider=ctx["provider"],
+            model=ctx["model"],
+            api_key=ctx["api_key"],
+            system_prompt=ctx["system_prompt"],
+            messages=ctx["messages"],
+        )
+        self.conversation_repo.add_exchange(db, ctx["conversation_id"], message, reply)
+        return ChatOutput(reply=reply, session_id=session_id)
+
+    def style_assistant_reply(self, db: Session, bot: Bot, messages: list) -> str:
+        """Helper agent constrained to only produce CSS/JS for the widget."""
+        pconf = next((p for p in bot.providers if p.provider == bot.active_provider), None)
+        api_key = decrypt(pconf.api_key_encrypted) if pconf else ""
+        if not pconf or not pconf.enabled or not api_key:
+            raise HTTPException(
+                status_code=400,
+                detail="Configure and enable a provider (model + API key) for this bot first.",
+            )
+        norm = []
+        for m in messages:
+            role = getattr(m, "role", None) or (m.get("role") if isinstance(m, dict) else "user")
+            content = getattr(m, "content", None) or (m.get("content") if isinstance(m, dict) else "")
+            role = "assistant" if role == "assistant" else "user"
+            if content:
+                norm.append({"role": role, "content": content})
+        if not norm:
+            raise HTTPException(status_code=400, detail="No message provided.")
+        return llm.generate_reply(
+            provider=bot.active_provider,
             model=pconf.model,
             api_key=api_key,
-            system_prompt=system_prompt,
-            messages=messages,
+            system_prompt=STYLE_ASSISTANT_SYSTEM,
+            messages=norm,
         )
-
-        # Persist the exchange atomically, only after a successful reply.
-        self.conversation_repo.add_exchange(db, convo.id, message, reply)
-
-        return ChatOutput(reply=reply, session_id=session_id)

@@ -197,6 +197,10 @@
       'stroke-linecap="round" stroke-linejoin="round">' +
       '<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>';
 
+    var newChatIcon =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+      'stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>';
+
     var sendIcon =
       '<svg viewBox="0 0 24 24"><path d="M4 12h13M12 6l6 6-6 6" fill="none" ' +
       'stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
@@ -234,10 +238,18 @@
       ".cbw-expand{background:none;border:none;color:#98a2b3;cursor:pointer;padding:0 4px 0 2px;display:none;align-items:center;}" +
       ".cbw-expand svg{width:16px;height:16px;}" +
       ".cbw-expand:hover{color:#475467;}" +
+      ".cbw-newchat{background:none;border:none;color:#98a2b3;cursor:pointer;padding:0 4px;display:inline-flex;align-items:center;}" +
+      ".cbw-newchat svg{width:17px;height:17px;}" +
+      ".cbw-newchat:hover{color:#475467;}" +
       /* body */
       ".cbw-body{flex:1;overflow-y:auto;padding:18px 16px;background:#fff;display:flex;flex-direction:column;gap:14px;}" +
       ".cbw-msg{font-size:14.5px;line-height:1.5;white-space:pre-wrap;word-wrap:break-word;overflow-wrap:anywhere;}" +
-      ".cbw-msg.bot{align-self:stretch;color:#1f2937;}" +
+      ".cbw-msg.bot{align-self:flex-start;max-width:85%;background:#f2f4f7;color:#1f2937;padding:9px 13px;" +
+      "border-radius:14px;border-bottom-left-radius:4px;}" +
+      ".cbw-msg.bot a{color:" + accent + ";}" +
+      ".cbw-msg.bot p{margin:0 0 8px;}.cbw-msg.bot p:last-child{margin-bottom:0;}" +
+      ".cbw-msg.bot ul,.cbw-msg.bot ol{margin:6px 0;padding-left:20px;}" +
+      ".cbw-msg.bot img{max-width:100%;border-radius:8px;}" +
       ".cbw-msg.user{align-self:flex-end;max-width:82%;background:" + accent + ";color:#fff;padding:9px 13px;" +
       "border-radius:14px;border-bottom-right-radius:4px;}" +
       ".cbw-msg.err{align-self:flex-start;max-width:90%;background:#fef3f2;color:#b42318;border:1px solid #fecdca;" +
@@ -283,6 +295,7 @@
       '<div class="cbw-header">' +
       '<div class="cbw-avatar">' + avatarInner + "</div>" +
       '<div class="cbw-hd"><span class="cbw-name"></span><span class="cbw-sub"></span></div>' +
+      '<button class="cbw-newchat" aria-label="New chat" title="New chat">' + newChatIcon + "</button>" +
       '<button class="cbw-expand" aria-label="Expand">' + expandIcon + "</button>" +
       '<button class="cbw-close" aria-label="Close">&times;</button>' +
       "</div>" +
@@ -301,6 +314,7 @@
     var panel = root.querySelector(".cbw-panel");
     var closeBtn = root.querySelector(".cbw-close");
     var expandBtn = root.querySelector(".cbw-expand");
+    var newChatBtn = root.querySelector(".cbw-newchat");
     var body = root.querySelector(".cbw-body");
     var input = root.querySelector(".cbw-input");
     var sendBtn = root.querySelector(".cbw-send");
@@ -331,7 +345,10 @@
     function addMsg(text, cls) {
       var el = document.createElement("div");
       el.className = "cbw-msg " + cls;
-      el.textContent = text;
+      // Bot replies may contain HTML (links, lists, etc.) and are rendered as
+      // markup so e.g. an <a> is actually clickable. User/error text is escaped.
+      if (cls === "bot") el.innerHTML = text;
+      else el.textContent = text;
       body.appendChild(el);
       scrollDown();
       return el;
@@ -390,10 +407,45 @@
       launcher.style.display = v ? "flex" : "none";
     }
     function ensureStarted() {
-      if (!started) {
-        started = true;
-        addMsg(welcome, "bot");
-      }
+      if (started) return;
+      started = true;
+      // Load prior history for this visitor's session (persists across pages).
+      fetch(
+        API_BASE +
+          "/v1/public/bots/" +
+          encodeURIComponent(BOT_KEY) +
+          "/history?session_id=" +
+          encodeURIComponent(sessionId)
+      )
+        .then(function (r) {
+          return r.ok ? r.json() : { messages: [] };
+        })
+        .then(function (data) {
+          var msgs = (data && data.messages) || [];
+          if (msgs.length) {
+            hideQuick();
+            msgs.forEach(function (m) {
+              addMsg(m.content, m.role === "user" ? "user" : "bot");
+            });
+          } else {
+            addMsg(welcome, "bot");
+          }
+        })
+        .catch(function () {
+          addMsg(welcome, "bot");
+        });
+    }
+
+    function newChat() {
+      // Start a fresh session; the previous conversation stays in the DB (owner keeps it).
+      sessionId = "s_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      try {
+        window.localStorage.setItem(SESSION_KEY, sessionId);
+      } catch (e) {}
+      body.innerHTML = "";
+      started = false;
+      quickWrap.classList.remove("cbw-hide");
+      showFull();
     }
     // Full chat view (with the message area).
     function showFull() {
@@ -431,6 +483,7 @@
       if (panel.classList.contains("cbw-compact")) showFull();
       else showCompact();
     });
+    newChatBtn.addEventListener("click", newChat);
 
     input.addEventListener("input", function () {
       input.style.height = "auto";
@@ -449,31 +502,89 @@
       input.value = "";
       input.style.height = "auto";
       var typing = showTyping();
+      var botEl = null;
+      var acc = "";
 
-      fetch(API_BASE + "/v1/public/bots/" + encodeURIComponent(BOT_KEY) + "/chat", {
+      function removeTyping() {
+        if (typing) {
+          typing.remove();
+          typing = null;
+        }
+      }
+      function fail(msg) {
+        removeTyping();
+        addMsg(msg || "Something went wrong. Please try again.", "err");
+      }
+      function handleEvent(jsonStr) {
+        var data;
+        try {
+          data = JSON.parse(jsonStr);
+        } catch (e) {
+          return;
+        }
+        if (data.error) {
+          fail(data.error);
+          return;
+        }
+        if (data.done) return;
+        if (data.delta) {
+          removeTyping();
+          if (!botEl) botEl = addMsg("", "bot");
+          acc += data.delta;
+          botEl.innerHTML = acc;
+          scrollDown();
+        }
+      }
+      function drain(buf) {
+        var parts = buf.split("\n\n");
+        var rest = parts.pop();
+        parts.forEach(function (evt) {
+          var line = evt.trim();
+          if (line.indexOf("data:") === 0) handleEvent(line.slice(5).trim());
+        });
+        return rest;
+      }
+
+      fetch(API_BASE + "/v1/public/bots/" + encodeURIComponent(BOT_KEY) + "/chat/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ session_id: sessionId, message: text }),
       })
-        .then(function (res) {
-          return res.json().then(function (data) {
-            return { ok: res.ok, data: data };
-          });
-        })
-        .then(function (r) {
-          typing.remove();
-          if (r.ok && r.data && r.data.reply) {
-            addMsg(r.data.reply, "bot");
-          } else {
-            var detail =
-              (r.data && (r.data.detail || r.data.message)) ||
-              "Something went wrong. Please try again.";
-            addMsg(typeof detail === "string" ? detail : "Error", "err");
+        .then(function (resp) {
+          if (!resp.ok) {
+            return resp
+              .json()
+              .catch(function () {
+                return {};
+              })
+              .then(function (d) {
+                fail((d && (d.detail || d.message)) || "Something went wrong.");
+              });
           }
+          if (!resp.body || !resp.body.getReader) {
+            // Fallback for browsers without streaming.
+            return resp.text().then(function (t) {
+              drain(t + "\n\n");
+            });
+          }
+          var reader = resp.body.getReader();
+          var decoder = new TextDecoder();
+          var buffer = "";
+          function pump() {
+            return reader.read().then(function (res) {
+              if (res.done) {
+                drain(buffer + "\n\n");
+                return;
+              }
+              buffer += decoder.decode(res.value, { stream: true });
+              buffer = drain(buffer);
+              return pump();
+            });
+          }
+          return pump();
         })
         .catch(function () {
-          typing.remove();
-          addMsg("Network error. Please try again.", "err");
+          fail("Network error. Please try again.");
         })
         .finally(function () {
           busy = false;
@@ -489,6 +600,21 @@
         send();
       }
     });
+
+    // Admin-authored custom CSS/JS. CSS is appended AFTER our base styles so the
+    // admin's rules take priority. JS runs with the shadow root as `root`.
+    if (cfg.custom_css) {
+      var customStyle = document.createElement("style");
+      customStyle.textContent = cfg.custom_css;
+      root.appendChild(customStyle);
+    }
+    if (cfg.custom_js) {
+      try {
+        new Function("root", "widget", cfg.custom_js)(root, panel);
+      } catch (e) {
+        console.error("[chatbot-widget] custom JS error:", e);
+      }
+    }
   }
 
   // ---- boot ---------------------------------------------------------------

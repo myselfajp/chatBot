@@ -1,4 +1,4 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -10,14 +10,33 @@ from app.schema.bot import (
     BotListResponse,
     BotOut,
     BotUpdate,
+    ConversationDetail,
+    ConversationListResponse,
+    ConversationSummary,
     FeedJobStatus,
+    MessageOut,
     SitemapFeedInput,
+    StyleAssistantInput,
+    StyleAssistantOutput,
 )
 from app.service.bot import BotService
 from app.service.deps import get_bot_service, get_current_user
 from app.service.sitemap import process_feed_job
 
 router = APIRouter(prefix="/v1/bots", tags=["bots"])
+
+
+def _job_status(job: FeedJob) -> FeedJobStatus:
+    return FeedJobStatus(
+        id=job.id,
+        status=job.status,
+        control=job.control,
+        sitemap_url=job.sitemap_url,
+        message=job.message,
+        pages_total=job.pages_total,
+        pages_done=job.pages_done,
+        items_added=job.items_added,
+    )
 
 
 @router.get("", response_model=BotListResponse)
@@ -91,16 +110,14 @@ def delete_bot(
 def start_sitemap_feed(
     bot_id: int,
     payload: SitemapFeedInput,
-    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     bot_service: BotService = Depends(get_bot_service),
 ):
-    """Start a background job that reads the sitemap and auto-generates feed
-    Q&A (with sources) using the bot's configured LLM."""
+    """Queue a Celery job that reads the sitemap and auto-generates feed Q&A
+    (with sources) using the bot's configured LLM."""
     bot = bot_service.get_owned_bot(db, bot_id, current_user)
 
-    # Require a usable active provider before spending time crawling.
     pconf = next((p for p in bot.providers if p.provider == bot.active_provider), None)
     if pconf is None or not pconf.enabled or not pconf.api_key_encrypted:
         raise HTTPException(
@@ -111,20 +128,10 @@ def start_sitemap_feed(
     job = FeedJob(bot_id=bot.id, sitemap_url=payload.sitemap_url.strip(), status="queued")
     db.add(job)
     db.commit()
-    db.refresh(job)
+    job_id = job.id  # populated by the uuid default; no refresh needed
 
-    background_tasks.add_task(
-        process_feed_job, job.id, payload.max_pages, payload.exclude
-    )
-    return FeedJobStatus(
-        id=job.id,
-        status=job.status,
-        sitemap_url=job.sitemap_url,
-        message=job.message,
-        pages_total=job.pages_total,
-        pages_done=job.pages_done,
-        items_added=job.items_added,
-    )
+    process_feed_job.delay(job_id, payload.max_pages, payload.exclude)
+    return _job_status(job)
 
 
 @router.get("/{bot_id}/feed/jobs/{job_id}", response_model=FeedJobStatus)
@@ -135,17 +142,118 @@ def get_feed_job(
     db: Session = Depends(get_db),
     bot_service: BotService = Depends(get_bot_service),
 ):
-    """Poll the status of a sitemap feed job."""
-    bot_service.get_owned_bot(db, bot_id, current_user)  # ownership check
+    """Poll the status/progress of a sitemap feed job."""
+    bot_service.get_owned_bot(db, bot_id, current_user)
     job = db.get(FeedJob, job_id)
     if not job or job.bot_id != bot_id:
         raise HTTPException(status_code=404, detail="Job not found")
-    return FeedJobStatus(
-        id=job.id,
-        status=job.status,
-        sitemap_url=job.sitemap_url,
-        message=job.message,
-        pages_total=job.pages_total,
-        pages_done=job.pages_done,
-        items_added=job.items_added,
+    return _job_status(job)
+
+
+def _set_job_control(db, bot_service, bot_id, job_id, current_user, control):
+    bot_service.get_owned_bot(db, bot_id, current_user)
+    job = db.get(FeedJob, job_id)
+    if not job or job.bot_id != bot_id:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status in ("done", "error", "stopped", "cancelled"):
+        return job  # already finished; nothing to control
+    job.control = control
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+@router.post("/{bot_id}/feed/jobs/{job_id}/stop", response_model=FeedJobStatus)
+def stop_feed_job(
+    bot_id: int,
+    job_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    bot_service: BotService = Depends(get_bot_service),
+):
+    """Stop the crawl but keep everything gathered so far."""
+    return _job_status(_set_job_control(db, bot_service, bot_id, job_id, current_user, "stop"))
+
+
+@router.post("/{bot_id}/feed/jobs/{job_id}/cancel", response_model=FeedJobStatus)
+def cancel_feed_job(
+    bot_id: int,
+    job_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    bot_service: BotService = Depends(get_bot_service),
+):
+    """Cancel the crawl and discard whatever was gathered."""
+    return _job_status(_set_job_control(db, bot_service, bot_id, job_id, current_user, "cancel"))
+
+
+# --------------------------------------------------------------------------- #
+# Conversations (owner view of what people asked)
+# --------------------------------------------------------------------------- #
+@router.get("/{bot_id}/conversations", response_model=ConversationListResponse)
+def list_conversations(
+    bot_id: int,
+    page: int = Query(1, ge=1),
+    limit: int = Query(30, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    bot_service: BotService = Depends(get_bot_service),
+):
+    bot_service.get_owned_bot(db, bot_id, current_user)
+    convos, total = bot_service.conversation_repo.list_for_bot(db, bot_id, page, limit)
+    items = []
+    for c in convos:
+        msgs = c.messages
+        first_user = next((m for m in msgs if m.role == "user"), None)
+        preview = (first_user.content if first_user else (msgs[0].content if msgs else ""))[:120]
+        items.append(
+            ConversationSummary(
+                id=c.id,
+                session_id=c.session_id,
+                message_count=len(msgs),
+                preview=preview,
+                created_at=c.created_at,
+                last_message_at=msgs[-1].created_at if msgs else None,
+            )
+        )
+    return ConversationListResponse(data=items, total=total)
+
+
+@router.get("/{bot_id}/conversations/{conversation_id}", response_model=ConversationDetail)
+def get_conversation(
+    bot_id: int,
+    conversation_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    bot_service: BotService = Depends(get_bot_service),
+):
+    bot_service.get_owned_bot(db, bot_id, current_user)
+    convo = bot_service.conversation_repo.get_detail(db, conversation_id)
+    if not convo or convo.bot_id != bot_id:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return ConversationDetail(
+        id=convo.id,
+        session_id=convo.session_id,
+        created_at=convo.created_at,
+        messages=[
+            MessageOut(role=m.role, content=m.content, created_at=m.created_at)
+            for m in convo.messages
+        ],
     )
+
+
+# --------------------------------------------------------------------------- #
+# Style assistant (helper that only writes widget CSS/JS)
+# --------------------------------------------------------------------------- #
+@router.post("/{bot_id}/style-assistant", response_model=StyleAssistantOutput)
+def style_assistant(
+    bot_id: int,
+    payload: StyleAssistantInput,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    bot_service: BotService = Depends(get_bot_service),
+):
+    """A helper agent (uses the bot's provider) that only helps write widget CSS/JS."""
+    bot = bot_service.get_owned_bot(db, bot_id, current_user)
+    reply = bot_service.style_assistant_reply(db, bot, payload.messages)
+    return StyleAssistantOutput(reply=reply)

@@ -17,18 +17,30 @@ services:
       retries: 5
     restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    container_name: chatbot-redis-prod
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
   app:
     build: .
     container_name: chatbot-app-prod
     env_file:
       - .env
     environment:
-      # Override database host for Docker network
       POSTGRES_HOST: db
+      CELERY_BROKER_URL: redis://redis:6379/0
     ports:
       - "${APP_PORT:-8000}:8000"
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: unless-stopped
     command: >
@@ -39,6 +51,27 @@ services:
         alembic upgrade head &&
         echo 'Starting production application...' &&
         uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+      "
+
+  worker:
+    build: .
+    container_name: chatbot-worker-prod
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: db
+      CELERY_BROKER_URL: redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    command: >
+      sh -c "
+        echo 'Waiting for database...' &&
+        sleep 8 &&
+        celery -A app.celery_app worker --loglevel=info --concurrency=2
       "
 
 networks:

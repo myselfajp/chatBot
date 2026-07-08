@@ -84,6 +84,14 @@ class Settings(BaseSettings):
     # Number of previous messages loaded as conversation context.
     CHAT_HISTORY_LIMIT: int = 20
 
+    # Celery / background jobs
+    CELERY_BROKER_URL: str = "redis://localhost:6379/0"
+    CELERY_TASK_ALWAYS_EAGER: bool = False
+
+    # Limits for admin-authored custom widget CSS / JS.
+    CUSTOM_CSS_MAX_CHARS: int = 20000
+    CUSTOM_JS_MAX_CHARS: int = 20000
+
     class Config:
         env_file = ".env"
         extra = "ignore"

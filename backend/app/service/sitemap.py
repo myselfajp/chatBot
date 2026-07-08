@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from app.celery_app import celery_app
 from app.core.crypto import decrypt
 from app.db.session import SessionLocal
 from app.model.feed_job import FeedJob
@@ -162,8 +163,33 @@ def _generate_qa(provider, model, api_key, url, content) -> List[dict]:
     return _parse_qa(reply)
 
 
+def _apply_to_feed(bot, generated: List[Tuple[str, str, str]]) -> None:
+    if not generated:
+        return
+    lines = ["", "=== Auto-generated from sitemap ==="]
+    for q, a, src in generated:
+        lines.append(f"Q: {q}\nA: {a}\n(Source: {src})\n")
+    block = "\n".join(lines)
+    bot.feed_data = ((bot.feed_data or "") + "\n" + block).strip()
+
+
+def _control(db, job) -> str:
+    """Re-read the cooperative control flag ('' | 'stop' | 'cancel')."""
+    try:
+        db.refresh(job)
+    except Exception:
+        pass
+    return job.control or ""
+
+
+@celery_app.task(name="process_feed_job")
 def process_feed_job(job_id: str, max_pages: int, excludes=None) -> None:
-    """Background worker: crawl the sitemap and append generated feed items."""
+    """Celery task: crawl the sitemap and append generated feed items.
+
+    Cooperatively honours job.control:
+      - "cancel" -> discard everything, mark cancelled
+      - "stop"   -> stop scanning, keep what was gathered, mark stopped
+    """
     db = SessionLocal()
     bot_repo = BotRepository()
     job = None
@@ -207,7 +233,18 @@ def process_feed_job(job_id: str, max_pages: int, excludes=None) -> None:
         db.commit()
 
         generated: List[Tuple[str, str, str]] = []
+        stopped = False
         for i, url in enumerate(urls):
+            ctl = _control(db, job)
+            if ctl == "cancel":
+                job.status = "cancelled"
+                job.items_added = 0
+                job.message = f"Cancelled after {i} page(s); nothing was added."
+                db.commit()
+                return
+            if ctl == "stop":
+                stopped = True
+                break
             try:
                 content = fetch_page_text(url)
                 if content:
@@ -220,16 +257,11 @@ def process_feed_job(job_id: str, max_pages: int, excludes=None) -> None:
             job.pages_done = i + 1
             db.commit()
 
-        if generated:
-            lines = ["", "=== Auto-generated from sitemap ==="]
-            for q, a, src in generated:
-                lines.append(f"Q: {q}\nA: {a}\n(Source: {src})\n")
-            block = "\n".join(lines)
-            bot.feed_data = ((bot.feed_data or "") + "\n" + block).strip()
-
+        _apply_to_feed(bot, generated)
         job.items_added = len(generated)
-        job.status = "done"
-        job.message = f"Read {job.pages_done} page(s); added {len(generated)} feed item(s)."
+        job.status = "stopped" if stopped else "done"
+        verb = "Stopped" if stopped else "Read"
+        job.message = f"{verb} at {job.pages_done} page(s); added {len(generated)} feed item(s)."
         db.commit()
     except Exception as exc:  # noqa: BLE001
         if job is not None:
