@@ -53,6 +53,8 @@ services:
   worker:
     build: .
     container_name: chatbot-worker-dev
+    healthcheck:
+      disable: true
     env_file:
       - .env
     environment:
