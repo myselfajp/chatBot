@@ -26,6 +26,7 @@ from app.model.bot import Bot  # noqa
 from app.model.bot_provider import BotProvider  # noqa
 from app.model.conversation import Conversation  # noqa
 from app.model.message import Message  # noqa
+from app.model.feed_job import FeedJob  # noqa
 
 # add your model's MetaData object here
 # for 'autogenerate' support

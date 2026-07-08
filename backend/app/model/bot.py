@@ -65,6 +65,9 @@ class Bot(Base):
     )
     # Newline-separated quick-reply buttons shown above the input.
     quick_replies: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # JSON array of link buttons [{"text": "...", "slug": "/contact"}] shown in
+    # both the compact and full widget; clicking navigates to the slug.
+    link_buttons: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # Optional small disclaimer shown under the input.
     footer_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     accent_color: Mapped[str] = mapped_column(

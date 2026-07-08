@@ -61,6 +61,7 @@ const emptyForm = {
   logo_url: "",
   welcome_message: "",
   quickRepliesText: "",
+  link_buttons: [],
   footer_text: "",
   accent_color: "#4f46e5",
   launcher_style: "circle",
@@ -97,6 +98,12 @@ export default function BotEditor() {
   const [success, setSuccess] = useState("");
   const [uploading, setUploading] = useState("");
 
+  // Sitemap -> feed
+  const [showSitemap, setShowSitemap] = useState(false);
+  const [sitemapUrl, setSitemapUrl] = useState("");
+  const [sitemapJob, setSitemapJob] = useState(null);
+  const [sitemapBusy, setSitemapBusy] = useState(false);
+
   const [publicKey, setPublicKey] = useState("");
   const [embedSnippet, setEmbedSnippet] = useState("");
   const [form, setForm] = useState(emptyForm);
@@ -123,6 +130,7 @@ export default function BotEditor() {
       logo_url: bot.logo_url || "",
       welcome_message: bot.welcome_message || "",
       quickRepliesText: (bot.quick_replies || []).join("\n"),
+      link_buttons: Array.isArray(bot.link_buttons) ? bot.link_buttons : [],
       footer_text: bot.footer_text || "",
       accent_color: bot.accent_color || "#4f46e5",
       launcher_style: bot.launcher_style || "circle",
@@ -148,6 +156,24 @@ export default function BotEditor() {
   }, [id]);
 
   const setField = (key, value) => setForm((f) => ({ ...f, [key]: value }));
+
+  const addLinkButton = () =>
+    setForm((f) => ({
+      ...f,
+      link_buttons: [...(f.link_buttons || []), { text: "", slug: "" }],
+    }));
+  const updateLinkButton = (i, key, val) =>
+    setForm((f) => ({
+      ...f,
+      link_buttons: f.link_buttons.map((b, idx) =>
+        idx === i ? { ...b, [key]: val } : b
+      ),
+    }));
+  const removeLinkButton = (i) =>
+    setForm((f) => ({
+      ...f,
+      link_buttons: f.link_buttons.filter((_, idx) => idx !== i),
+    }));
 
   const uploadImage = async (fieldKey, e) => {
     const file = e.target.files && e.target.files[0];
@@ -202,6 +228,9 @@ export default function BotEditor() {
           .split("\n")
           .map((s) => s.trim())
           .filter(Boolean),
+        link_buttons: (form.link_buttons || [])
+          .map((b) => ({ text: (b.text || "").trim(), slug: (b.slug || "").trim() }))
+          .filter((b) => b.text && b.slug),
         footer_text: form.footer_text,
         accent_color: form.accent_color,
         launcher_style: form.launcher_style,
@@ -232,6 +261,40 @@ export default function BotEditor() {
   const copyEmbed = () => {
     navigator.clipboard?.writeText(embedSnippet);
     setSuccess("Embed code copied to clipboard.");
+  };
+
+  const startSitemap = async () => {
+    const url = sitemapUrl.trim();
+    if (!url || sitemapBusy) return;
+    setSitemapBusy(true);
+    setError("");
+    setSuccess("");
+    setSitemapJob({ status: "queued", pages_done: 0, pages_total: 0, items_added: 0 });
+    try {
+      const { data } = await api.post(`/v1/bots/${id}/feed/sitemap`, {
+        sitemap_url: url,
+        max_pages: 15,
+      });
+      let job = data;
+      for (let i = 0; i < 150 && job.status !== "done" && job.status !== "error"; i++) {
+        await new Promise((r) => setTimeout(r, 2500));
+        const res = await api.get(`/v1/bots/${id}/feed/jobs/${data.id}`);
+        job = res.data;
+        setSitemapJob(job);
+      }
+      if (job.status === "done") {
+        // Refresh just the feed field with the server-appended items.
+        const botRes = await api.get(`/v1/bots/${id}`);
+        setField("feed_data", botRes.data.feed_data || "");
+        setSuccess(job.message || "Feed generated from the sitemap.");
+      } else if (job.status === "error") {
+        setError(job.message || "Sitemap import failed.");
+      }
+    } catch (err) {
+      setError(errMsg(err));
+    } finally {
+      setSitemapBusy(false);
+    }
   };
 
   if (loading) return <FullPageSpinner />;
@@ -371,10 +434,63 @@ export default function BotEditor() {
       {/* ---------------- Feed Data ---------------- */}
       {tab === "Feed Data" && (
         <div className="card card-pad">
-          <Field
-            label="Source (feed) data"
-            hint="Paste the knowledge the bot should answer from — FAQs, product info, policies, etc. The bot uses this as its source instead of crawling your whole site."
-          >
+          <div className="between mb-1">
+            <label className="label" style={{ margin: 0 }}>
+              Source (feed) data
+            </label>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => setShowSitemap((s) => !s)}
+            >
+              🌐 Read from site
+            </button>
+          </div>
+
+          {showSitemap && (
+            <div
+              className="card card-pad mb-2"
+              style={{ background: "#fafafb" }}
+            >
+              <Field
+                label="Sitemap URL"
+                hint="We read each page listed in the sitemap and use your active provider to auto-generate FAQ items — each tagged with its source page. Up to 15 pages per run."
+              >
+                <div className="row">
+                  <input
+                    className="input mono"
+                    style={{ flex: 1 }}
+                    value={sitemapUrl}
+                    onChange={(e) => setSitemapUrl(e.target.value)}
+                    placeholder="https://example.com/sitemap.xml"
+                  />
+                  <button
+                    className="btn btn-primary"
+                    disabled={sitemapBusy}
+                    onClick={startSitemap}
+                  >
+                    {sitemapBusy ? <Spinner /> : "Generate"}
+                  </button>
+                </div>
+              </Field>
+              {sitemapJob && (
+                <div className="hint" style={{ marginTop: 4 }}>
+                  Status: <strong>{sitemapJob.status}</strong>
+                  {sitemapJob.pages_total > 0 &&
+                    ` — read ${sitemapJob.pages_done}/${sitemapJob.pages_total} pages`}
+                  {sitemapJob.items_added > 0 &&
+                    `, ${sitemapJob.items_added} items added`}
+                  {sitemapJob.message ? ` — ${sitemapJob.message}` : ""}
+                </div>
+              )}
+              <p className="hint" style={{ marginBottom: 0 }}>
+                Generated items are appended below with a{" "}
+                <span className="mono">(Source: …)</span> line. Review, then press
+                Save.
+              </p>
+            </div>
+          )}
+
+          <Field hint="Paste the knowledge the bot should answer from — FAQs, product info, policies, etc. The bot uses this as its source instead of crawling your whole site.">
             <textarea
               className="textarea"
               rows={16}
@@ -601,15 +717,49 @@ export default function BotEditor() {
 
             <Field
               label="Quick reply buttons"
-              hint="One per line. Shown as tappable buttons above the input (e.g. Contact sales, I need support)."
+              hint="One per line. Sent as a chat message when tapped; hidden after the first reply."
             >
               <textarea
                 className="textarea"
                 rows={3}
                 value={form.quickRepliesText}
                 onChange={(e) => setField("quickRepliesText", e.target.value)}
-                placeholder={"Contact sales\nI need support"}
+                placeholder={"How do I get started?\nTalk to a human"}
               />
+            </Field>
+
+            <Field
+              label="Link buttons"
+              hint="Shown in both the compact and full widget. Clicking navigates to the slug — a path like /contact or a full URL. Add as many as you like."
+            >
+              {(form.link_buttons || []).map((b, i) => (
+                <div className="row mb-1" key={i}>
+                  <input
+                    className="input"
+                    style={{ flex: 1 }}
+                    placeholder="Button text (e.g. Contact us)"
+                    value={b.text}
+                    onChange={(e) => updateLinkButton(i, "text", e.target.value)}
+                  />
+                  <input
+                    className="input mono"
+                    style={{ flex: 1 }}
+                    placeholder="/contact or https://…"
+                    value={b.slug}
+                    onChange={(e) => updateLinkButton(i, "slug", e.target.value)}
+                  />
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => removeLinkButton(i)}
+                    title="Remove"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+              <button className="btn btn-secondary btn-sm" onClick={addLinkButton}>
+                ＋ Add button
+              </button>
             </Field>
 
             <Field

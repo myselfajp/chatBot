@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from typing import List, Optional
 from urllib.parse import urlparse
@@ -40,6 +41,37 @@ def text_to_paths(text: str) -> List[str]:
     if not text:
         return []
     return [line.strip() for line in text.splitlines() if line.strip()]
+
+
+def link_buttons_to_text(items) -> str:
+    """Serialize a list of LinkButton (pydantic or dict) to JSON text."""
+    if not items:
+        return ""
+    out = []
+    for b in items:
+        if isinstance(b, dict):
+            text, slug = b.get("text"), b.get("slug")
+        else:
+            text, slug = getattr(b, "text", None), getattr(b, "slug", None)
+        if text and slug:
+            out.append({"text": str(text).strip()[:60], "slug": str(slug).strip()[:500]})
+    return json.dumps(out, ensure_ascii=False)
+
+
+def text_to_link_buttons(text: str) -> List[dict]:
+    if not text:
+        return []
+    try:
+        data = json.loads(text)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return [
+        {"text": d.get("text", ""), "slug": d.get("slug", "")}
+        for d in data
+        if isinstance(d, dict) and d.get("text") and d.get("slug")
+    ]
 
 
 def host_of(value: str) -> str:
@@ -119,6 +151,8 @@ class BotService:
             bot.display_paths = paths_to_text(payload.display_paths)
         if "quick_replies" in provided:
             bot.quick_replies = paths_to_text(payload.quick_replies)
+        if "link_buttons" in provided:
+            bot.link_buttons = link_buttons_to_text(payload.link_buttons)
 
         simple_fields = {
             "name",
@@ -222,6 +256,7 @@ class BotService:
             logo_url=bot.logo_url,
             welcome_message=bot.welcome_message,
             quick_replies=text_to_paths(bot.quick_replies),
+            link_buttons=text_to_link_buttons(bot.link_buttons),
             footer_text=bot.footer_text,
             accent_color=bot.accent_color,
             launcher_style=bot.launcher_style,
@@ -245,6 +280,7 @@ class BotService:
             logo_url=bot.logo_url,
             welcome_message=bot.welcome_message,
             quick_replies=text_to_paths(bot.quick_replies),
+            link_buttons=text_to_link_buttons(bot.link_buttons),
             footer_text=bot.footer_text,
             accent_color=bot.accent_color,
             launcher_style=bot.launcher_style,

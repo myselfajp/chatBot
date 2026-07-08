@@ -24,6 +24,7 @@ import app.model.bot  # noqa: E402,F401
 import app.model.bot_provider  # noqa: E402,F401
 import app.model.conversation  # noqa: E402,F401
 import app.model.message  # noqa: E402,F401
+import app.model.feed_job  # noqa: E402,F401
 
 Base.metadata.create_all(engine)
 
@@ -32,9 +33,26 @@ from app.service import llm  # noqa: E402
 
 def _fake_reply(provider, model, api_key, system_prompt, messages):
     last = messages[-1]["content"] if messages else ""
+    if "JSON array" in last or "question/answer" in last:
+        return '[{"question":"What is X?","answer":"X is a test answer."}]'
     return f"[{provider}:{model}] echo -> {last}"
 
 llm.generate_reply = _fake_reply
+
+# Mock network fetches for the sitemap feed job.
+from app.service import sitemap as _sitemap  # noqa: E402
+
+def _fake_fetch(url):
+    if "sitemap" in url:
+        return (
+            '<?xml version="1.0"?><urlset>'
+            "<url><loc>https://ex.com/a</loc></url>"
+            "<url><loc>https://ex.com/b</loc></url>"
+            "</urlset>"
+        )
+    return "<html><body><h1>Page</h1><p>Content about products and returns.</p></body></html>"
+
+_sitemap._fetch = _fake_fetch
 
 from app import main  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -101,6 +119,10 @@ with TestClient(main.app) as client:
         "logo_url": "https://example.com/logo.png",
         "welcome_message": "Hi! Ask me about our shoes.",
         "quick_replies": ["Contact sales", "I need support"],
+        "link_buttons": [
+            {"text": "Contact us", "slug": "/contact"},
+            {"text": "Docs", "slug": "https://docs.example.com"},
+        ],
         "footer_text": "By continuing you agree to our policy.",
         "accent_color": "#ff5722",
         "launcher_style": "bar",
@@ -114,6 +136,9 @@ with TestClient(main.app) as client:
     check("paths stored as list", b2.get("display_paths") == ["/checkout", "/admin/*"], r.text)
     check("launcher_style saved", b2.get("launcher_style") == "bar", r.text)
     check("subtitle saved", b2.get("bot_subtitle") == "Product Specialist", r.text)
+    lbs = b2.get("link_buttons") or []
+    check("link_buttons saved (2)", len(lbs) == 2, r.text)
+    check("link_button has text+slug", lbs and lbs[0].get("text") == "Contact us" and lbs[0].get("slug") == "/contact", r.text)
     check("logo_url saved", b2.get("logo_url") == "https://example.com/logo.png", r.text)
     check("quick_replies list", b2.get("quick_replies") == ["Contact sales", "I need support"], r.text)
     check("footer_text saved", b2.get("footer_text") == "By continuing you agree to our policy.", r.text)
@@ -144,6 +169,22 @@ with TestClient(main.app) as client:
     r = client.put(f"/v1/bots/{bot_id}", json={"launcher_style": "nope"}, headers=H)
     check("invalid launcher_style rejected (422)", r.status_code == 422, r.text)
 
+    print("== sitemap -> feed job ==")
+    r = client.post(
+        f"/v1/bots/{bot_id}/feed/sitemap",
+        json={"sitemap_url": "https://ex.com/sitemap.xml", "max_pages": 5},
+        headers=H,
+    )
+    check("sitemap job accepted (202)", r.status_code == 202, r.text)
+    jid = r.json().get("id", "")
+    # TestClient runs the background task before returning, so it should be done.
+    r = client.get(f"/v1/bots/{bot_id}/feed/jobs/{jid}", headers=H)
+    job = r.json()
+    check("job status done", job.get("status") == "done", r.text)
+    check("job added items", job.get("items_added", 0) > 0, r.text)
+    r = client.get(f"/v1/bots/{bot_id}", headers=H)
+    check("feed has (Source: ...) attribution", "(Source:" in r.json().get("feed_data", ""), r.json().get("feed_data", "")[:120])
+
     print("== ownership isolation ==")
     # second user cannot access first user's bot
     reg2 = {"email": "other@example.com", "password": "Password123", "full_name": "Other", "phone_number": "09120000001"}
@@ -163,6 +204,7 @@ with TestClient(main.app) as client:
     check("config has quick_replies", cfg.get("quick_replies") == ["Contact sales", "I need support"], r.text)
     check("config has subtitle", cfg.get("bot_subtitle") == "Product Specialist", r.text)
     check("config has launcher_style", cfg.get("launcher_style") == "bar", r.text)
+    check("config has link_buttons", len(cfg.get("link_buttons") or []) == 2, r.text)
 
     print("== public chat ==")
     r = client.post(f"/v1/public/bots/{pub}/chat", json={"session_id": "sess-1", "message": "Do you accept returns?"})

@@ -162,6 +162,7 @@
     var welcome = cfg.welcome_message || "Hi! How can I help you?";
     var logoUrl = cfg.logo_url || "";
     var quickReplies = Array.isArray(cfg.quick_replies) ? cfg.quick_replies : [];
+    var linkButtons = Array.isArray(cfg.link_buttons) ? cfg.link_buttons : [];
     var footerText = cfg.footer_text || "";
     var launcherStyle = cfg.launcher_style || "circle"; // circle | icon | bar
     var launcherIconUrl = cfg.launcher_icon_url || "";
@@ -251,6 +252,12 @@
       ".cbw-quick button{background:" + accent + ";color:#fff;border:none;border-radius:8px;padding:9px 14px;" +
       "font-size:13.5px;font-weight:600;cursor:pointer;transition:opacity .15s;}" +
       ".cbw-quick button:hover{opacity:.9;}" +
+      /* link buttons (navigate to a slug; shown in both compact & full) */
+      ".cbw-links{display:flex;flex-direction:column;gap:8px;padding:0 16px 10px;}" +
+      ".cbw-links:empty{display:none;}" +
+      ".cbw-links button{background:" + accent + ";color:#fff;border:none;border-radius:8px;padding:10px 14px;" +
+      "font-size:14px;font-weight:600;cursor:pointer;text-align:center;transition:opacity .15s;}" +
+      ".cbw-links button:hover{opacity:.9;}" +
       /* input */
       ".cbw-inwrap{padding:8px 12px 6px;}" +
       ".cbw-inbox{display:flex;align-items:flex-end;gap:6px;border:1px solid #d0d5dd;border-radius:12px;" +
@@ -281,6 +288,7 @@
       "</div>" +
       '<div class="cbw-body"></div>' +
       '<div class="cbw-quick"></div>' +
+      '<div class="cbw-links"></div>' +
       '<div class="cbw-inwrap"><div class="cbw-inbox">' +
       '<textarea class="cbw-input" rows="1" placeholder="Write a message..."></textarea>' +
       '<button class="cbw-send" aria-label="Send">' + sendIcon + "</button>" +
@@ -297,6 +305,7 @@
     var input = root.querySelector(".cbw-input");
     var sendBtn = root.querySelector(".cbw-send");
     var quickWrap = root.querySelector(".cbw-quick");
+    var linkWrap = root.querySelector(".cbw-links");
     var footEl = root.querySelector(".cbw-foot");
 
     root.querySelector(".cbw-name").textContent = name;
@@ -356,6 +365,26 @@
         quickWrap.appendChild(b);
       });
     }
+
+    // Link buttons: navigate to a slug (path or full URL). Shown in both modes.
+    function navTo(slug) {
+      var s = (slug || "").trim();
+      if (!s) return;
+      var target = /^https?:\/\//i.test(s)
+        ? s
+        : window.location.origin + (s.charAt(0) === "/" ? s : "/" + s);
+      window.location.href = target;
+    }
+    linkButtons.forEach(function (lb) {
+      if (!lb || !lb.text || !lb.slug) return;
+      var b = document.createElement("button");
+      b.type = "button";
+      b.textContent = lb.text;
+      b.addEventListener("click", function () {
+        navTo(lb.slug);
+      });
+      linkWrap.appendChild(b);
+    });
 
     function showLauncher(v) {
       launcher.style.display = v ? "flex" : "none";

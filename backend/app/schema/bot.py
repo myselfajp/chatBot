@@ -43,6 +43,14 @@ class ProviderConfigOut(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Link buttons (navigation buttons shown in the widget)
+# --------------------------------------------------------------------------- #
+class LinkButton(BaseModel):
+    text: str = Field(..., max_length=60)
+    slug: str = Field(..., max_length=500)  # e.g. "/contact" or a full URL
+
+
+# --------------------------------------------------------------------------- #
 # Bot create / update
 # --------------------------------------------------------------------------- #
 class BotCreate(BaseModel):
@@ -63,6 +71,7 @@ class BotUpdate(BaseModel):
     logo_url: Optional[str] = Field(default=None, max_length=500)
     welcome_message: Optional[str] = None
     quick_replies: Optional[List[str]] = None
+    link_buttons: Optional[List[LinkButton]] = None
     footer_text: Optional[str] = None
     accent_color: Optional[str] = Field(default=None, max_length=20)
     launcher_style: Optional[str] = None
@@ -114,6 +123,7 @@ class BotOut(BaseModel):
     logo_url: str
     welcome_message: str
     quick_replies: List[str]
+    link_buttons: List[LinkButton]
     footer_text: str
     accent_color: str
     launcher_style: str
@@ -170,11 +180,30 @@ class PublicBotConfig(BaseModel):
     logo_url: str
     welcome_message: str
     quick_replies: List[str]
+    link_buttons: List[LinkButton]
     footer_text: str
     accent_color: str
     launcher_style: str
     launcher_icon_url: str
     is_active: bool
+
+
+# --------------------------------------------------------------------------- #
+# Feed-from-sitemap job
+# --------------------------------------------------------------------------- #
+class SitemapFeedInput(BaseModel):
+    sitemap_url: str = Field(..., max_length=1000)
+    max_pages: int = Field(default=15, ge=1, le=40)
+
+
+class FeedJobStatus(BaseModel):
+    id: str
+    status: str  # queued | running | done | error
+    sitemap_url: str
+    message: str
+    pages_total: int
+    pages_done: int
+    items_added: int
 
 
 class ChatInput(BaseModel):
