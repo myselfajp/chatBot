@@ -37,6 +37,11 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/0
     ports:
       - "${APP_PORT:-8000}:8000"
+    volumes:
+      # Persist uploaded bot logos / launcher icons across rebuilds & recreates.
+      # (Without this, app/static/uploads lives only in the container layer and
+      #  is wiped on every `up --build`.) Host dir must be owned by uid 1000.
+      - /srv/chatbot/uploads:/app/app/static/uploads
     depends_on:
       db:
         condition: service_healthy
