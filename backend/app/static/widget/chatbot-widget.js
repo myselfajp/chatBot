@@ -283,7 +283,22 @@
       ".cbw-send:disabled{opacity:.5;cursor:not-allowed;}" +
       ".cbw-send svg{width:18px;height:18px;}" +
       /* footer */
-      ".cbw-foot{text-align:center;font-size:11.5px;color:#98a2b3;padding:2px 16px 12px;line-height:1.45;}";
+      ".cbw-foot{text-align:center;font-size:11.5px;color:#98a2b3;padding:2px 16px 12px;line-height:1.45;}" +
+      /* --- mobile: full-screen sheet so nothing is clipped and the keyboard can't
+         cover the input. dvh tracks the browser chrome; a JS visualViewport hook
+         (below) keeps it pinned above the on-screen keyboard. --- */
+      "@media (max-width:480px){" +
+      ".cbw-launcher{bottom:16px;right:16px;width:56px;height:56px;}" +
+      ".cbw-panel{top:0;left:0;right:0;bottom:0;width:100%;max-width:100%;" +
+      "height:100vh;height:100dvh;max-height:100vh;max-height:100dvh;" +
+      "border-radius:0;border:none;padding-bottom:env(safe-area-inset-bottom,0);}" +
+      ".cbw-panel.cbw-compact{top:auto;height:auto;max-height:85vh;max-height:85dvh;" +
+      "border-radius:18px 18px 0 0;}" +
+      ".cbw-header{padding:14px 14px 12px;}" +
+      ".cbw-body{padding:16px 14px;}" +
+      ".cbw-msg.bot,.cbw-msg.user{max-width:90%;}" +
+      ".cbw-input{font-size:16px;}" + // >=16px stops iOS from auto-zooming on focus
+      "}";
     root.appendChild(style);
 
     var wrap = document.createElement("div");
@@ -453,6 +468,7 @@
       panel.classList.remove("cbw-compact");
       ensureStarted();
       showLauncher(false);
+      syncViewport();
       input.focus();
     }
     // Compact box (header + quick replies + input + footer, no message area).
@@ -460,10 +476,44 @@
       panel.classList.add("cbw-open");
       panel.classList.add("cbw-compact");
       showLauncher(false);
+      syncViewport();
     }
     function hidePanel() {
       panel.classList.remove("cbw-open");
       showLauncher(true);
+      syncViewport();
+    }
+
+    // On phones the panel is a full-screen sheet. `100dvh` follows the browser
+    // chrome but NOT the on-screen keyboard, so we pin the sheet to the visual
+    // viewport: it shrinks to the space above the keyboard and the input stays
+    // visible. On desktop / larger screens this is a no-op (styles cleared).
+    var vv = window.visualViewport;
+    function isMobileView() {
+      try {
+        return window.matchMedia("(max-width:480px)").matches;
+      } catch (e) {
+        return false;
+      }
+    }
+    function syncViewport() {
+      if (!vv) return;
+      var fullOpen =
+        panel.classList.contains("cbw-open") &&
+        !panel.classList.contains("cbw-compact");
+      if (isMobileView() && fullOpen) {
+        panel.style.height = vv.height + "px";
+        panel.style.top = vv.offsetTop + "px";
+        panel.style.bottom = "auto";
+      } else {
+        panel.style.height = "";
+        panel.style.top = "";
+        panel.style.bottom = "";
+      }
+    }
+    if (vv) {
+      vv.addEventListener("resize", syncViewport);
+      vv.addEventListener("scroll", syncViewport);
     }
 
     // Initial state depends on the launcher style.
